@@ -27,6 +27,8 @@ Controls:
 - `e`: east
 - `w`: west
 - `d`: delay, skip your move
+- `u`: undo last move
+- `q`: quit game (ctrl-c also works)
 
 Starting the game:
 

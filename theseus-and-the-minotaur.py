@@ -19,6 +19,7 @@ MOVE_LEFT = "w"
 MOVE_RIGHT = "e"
 MOVE_SKIP = "d"
 MOVE_QUIT = "q"
+MOVE_UNDO = "u"
 
 
 Maze = List[List[str]]
@@ -27,8 +28,8 @@ Coord = Tuple[int, int]
 
 class State(NamedTuple):
     maze: Maze
-    player: Coord
-    minotaur: Coord
+    player: List[Coord]
+    minotaur: List[Coord]
     finish: Coord
     moves: List[str]
     initial: List[str]
@@ -59,15 +60,16 @@ def loadMaze(filename: str) -> State:
 
                 maze[y].append(char)
 
-    return State(maze, player, minotaur, finish, [], [])
+    return State(maze, [player], [minotaur], finish, [], [])
 
 
 def printMaze(state: State) -> None:
     """
     Prints the maze with the player and minotaur
     """
-    maze, player, minotaur, _, moves, _ = state
-    printedMaze: Maze = deepcopy(maze)
+    printedMaze: Maze = deepcopy(state.maze)
+    player = state.player[-1]
+    minotaur = state.minotaur[-1]
     printedMaze[player[1]][player[0]] = PLAYER
     printedMaze[minotaur[1]][minotaur[0]] = MINOTAUR
 
@@ -75,7 +77,7 @@ def printMaze(state: State) -> None:
     for row in printedMaze:
         print("".join(row))
 
-    print("Moves: " + ";".join(moves))
+    print("Moves: " + ";".join(state.moves))
 
 
 def isLocValid(maze: Maze, loc: Coord) -> bool:
@@ -127,7 +129,8 @@ def moveMinotaur(state: State) -> Coord:
 
     It must move horizontally first and then vertically.
     """
-    maze, player, minotaur, _, _, _ = state
+    player = state.player[-1]
+    minotaur = state.minotaur[-1]
     move = MOVE_SKIP
 
     # try to move horizontally
@@ -137,7 +140,7 @@ def moveMinotaur(state: State) -> Coord:
     elif player[0] > minotaur[0]:
         move = MOVE_RIGHT
 
-    (newMinotaur, _) = movePlayer(maze, minotaur, move)
+    (newMinotaur, _) = movePlayer(state.maze, minotaur, move)
     if newMinotaur != minotaur:
         return newMinotaur
 
@@ -148,7 +151,7 @@ def moveMinotaur(state: State) -> Coord:
     elif player[1] > minotaur[1]:
         move = MOVE_DOWN
 
-    (newMinotaur, _) = movePlayer(maze, minotaur, move)
+    (newMinotaur, _) = movePlayer(state.maze, minotaur, move)
     return newMinotaur
 
 
@@ -175,21 +178,28 @@ def mainLoop(state: State) -> State:
     if move == MOVE_QUIT:
         print("You quit!")
         sys.exit(1)
+    elif move == MOVE_UNDO:
+        if len(state.moves) > 0:
+            state.player.pop()
+            state.minotaur.pop()
+            state.minotaur.pop()
+            state.moves.pop()
+        return state
 
-    (player, valid) = movePlayer(state.maze, state.player, move)
+    (player, valid) = movePlayer(state.maze, state.player[-1], move)
     if not valid:
         return state
 
-    state = state._replace(player=player)
-    state = state._replace(moves=state.moves + [move])
+    state.player.append(player)
+    state.moves.append(move)
 
     # minotaur moves twice
     minotaur = moveMinotaur(state)
-    state = state._replace(minotaur=minotaur)
+    state.minotaur.append(minotaur)
     minotaur = moveMinotaur(state)
-    state = state._replace(minotaur=minotaur)
+    state.minotaur.append(minotaur)
 
-    if player == state.minotaur:
+    if player == state.minotaur[-1]:
         printMaze(state)
         print("You lose!")
         sys.exit(1)
