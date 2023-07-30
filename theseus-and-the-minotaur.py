@@ -31,6 +31,7 @@ class State(NamedTuple):
     minotaur: Coord
     finish: Coord
     moves: List[str]
+    initial: List[str]
 
 
 def loadMaze(filename: str) -> State:
@@ -58,14 +59,14 @@ def loadMaze(filename: str) -> State:
 
                 maze[y].append(char)
 
-    return State(maze, player, minotaur, finish, [])
+    return State(maze, player, minotaur, finish, [], [])
 
 
 def printMaze(state: State) -> None:
     """
     Prints the maze with the player and minotaur
     """
-    maze, player, minotaur, _, _ = state
+    maze, player, minotaur, _, moves, _ = state
     printedMaze: Maze = deepcopy(maze)
     printedMaze[player[1]][player[0]] = PLAYER
     printedMaze[minotaur[1]][minotaur[0]] = MINOTAUR
@@ -73,6 +74,8 @@ def printMaze(state: State) -> None:
     print("\033c", end="")  # clear screen
     for row in printedMaze:
         print("".join(row))
+
+    print("Moves: " + ";".join(moves))
 
 
 def isLocValid(maze: Maze, loc: Coord) -> bool:
@@ -124,7 +127,7 @@ def moveMinotaur(state: State) -> Coord:
 
     It must move horizontally first and then vertically.
     """
-    maze, player, minotaur, _, _ = state
+    maze, player, minotaur, _, _, _ = state
     move = MOVE_SKIP
 
     # try to move horizontally
@@ -149,7 +152,7 @@ def moveMinotaur(state: State) -> Coord:
     return newMinotaur
 
 
-def main(filename: str):
+def mainLoop(state: State) -> State:
     """
     Main game loop
 
@@ -159,46 +162,61 @@ def main(filename: str):
     - move player
     - move minotaur twice
     - check for winning and losing conditions
-    """
-    state = loadMaze(filename)
 
-    while True:
-        printMaze(state)
+    Both state and initial are mutated in place.
+    """
+    printMaze(state)
+
+    if len(state.initial) > 0:
+        move = state.initial.pop(0)
+    else:
         move = getch()
 
-        if move == MOVE_QUIT:
-            print("You quit! Moves so far:")
-            print(";".join(state.moves))
-            sys.exit(0)
+    if move == MOVE_QUIT:
+        print("You quit!")
+        sys.exit(1)
 
-        (player, valid) = movePlayer(state.maze, state.player, move)
-        if not valid:
-            continue
+    (player, valid) = movePlayer(state.maze, state.player, move)
+    if not valid:
+        return state
 
-        state = state._replace(player=player)
-        state = state._replace(moves=state.moves + [move])
+    state = state._replace(player=player)
+    state = state._replace(moves=state.moves + [move])
 
-        # minotaur moves twice
-        minotaur = moveMinotaur(state)
-        state = state._replace(minotaur=minotaur)
-        minotaur = moveMinotaur(state)
-        state = state._replace(minotaur=minotaur)
+    # minotaur moves twice
+    minotaur = moveMinotaur(state)
+    state = state._replace(minotaur=minotaur)
+    minotaur = moveMinotaur(state)
+    state = state._replace(minotaur=minotaur)
 
-        if player == state.minotaur:
-            printMaze(state)
-            print("You lose! Moves:")
-            print(";".join(state.moves))
-            sys.exit(1)
+    if player == state.minotaur:
+        printMaze(state)
+        print("You lose!")
+        sys.exit(1)
 
-        if player == state.finish:
-            printMaze(state)
-            print("You win! Moves:")
-            print(";".join(state.moves))
-            sys.exit(0)
+    if player == state.finish:
+        printMaze(state)
+        print("You win!")
+        sys.exit(0)
+
+    return state
 
 
-if len(sys.argv) != 2:
-    print("Usage: python3 theseus-and-the-minotaur.py <maze filename>")
-    sys.exit(1)
+def main() -> None:
+    if len(sys.argv) < 2 or len(sys.argv) > 3:
+        print("Usage: python3 theseus-and-the-minotaur.py <maze filename> <optional starting position>")
+        sys.exit(1)
 
-main(sys.argv[1])
+    filename = sys.argv[1]
+    state = loadMaze(filename)
+
+    initial: List[str] = []
+    if len(sys.argv) == 3:
+        initial = sys.argv[2].split(";")
+        state = state._replace(initial=initial)
+
+    while True:
+        state = mainLoop(state)
+
+
+main()
