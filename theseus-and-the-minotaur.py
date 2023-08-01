@@ -1,47 +1,67 @@
 #!/usr/bin/env python3
 
-from typing import List, Tuple, NamedTuple
-from copy import deepcopy
+from typing import List, Tuple, NamedTuple, Dict, Set
 from getch import getch  # type: ignore
+from enum import Enum
 import sys
+import random
 
-EMPTY = " "
-WALL = "#"
-WALKABLE = "."
-FINISH = "X"
+
+class MazeTile(Enum):
+    EMPTY = " "
+    WALL = "#"
+    WALKABLE = "."
+    FINISH = "X"
+
 
 PLAYER = "*"
 MINOTAUR = "M"
 
-MOVE_UP = "n"
-MOVE_DOWN = "s"
-MOVE_LEFT = "w"
-MOVE_RIGHT = "e"
-MOVE_SKIP = "d"
-MOVE_QUIT = "q"
-MOVE_UNDO = "u"
+Maze = List[List[MazeTile]]
 
-
-Maze = List[List[str]]
 Coord = Tuple[int, int]
+Player = Coord
+Minotaur = Coord
+
+
+class Move(Enum):
+    UP = "n"
+    DOWN = "s"
+    LEFT = "w"
+    RIGHT = "e"
+    SKIP = "d"
+    QUIT = "q"
+    UNDO = "u"
+    AUTO = "a"
+
+
+UncheckedMoves = Set[Move]
+
+
+class Turn(NamedTuple):
+    player: Player
+    minotaur: Minotaur
+    moves: List[Move]
 
 
 class State(NamedTuple):
     maze: Maze
-    player: List[Coord]
-    minotaur: List[Coord]
     finish: Coord
-    moves: List[str]
-    initial: List[str]
+    initial: List[Move]
+    turns: List[Turn]
+    traversed: Dict[Tuple[Player, Minotaur], UncheckedMoves]
+    solver: bool
 
 
 def loadMaze(filename: str) -> State:
     """
-    Loads a maze from a file
+    Loads a maze from a file.
+
+    Replace player and minotaur with WALKABLE tiles.
     """
     maze: Maze = []
-    player: Coord = (0, 0)
-    minotaur: Coord = (0, 0)
+    player: Player = (0, 0)
+    minotaur: Minotaur = (0, 0)
     finish: Coord = (0, 0)
 
     with open(filename) as f:
@@ -50,34 +70,57 @@ def loadMaze(filename: str) -> State:
             for (x, char) in enumerate(line.strip()):
                 if char == PLAYER:
                     player = (x, y)
-                    char = WALKABLE
+                    tile = MazeTile.WALKABLE
                 elif char == MINOTAUR:
                     minotaur = (x, y)
-                    char = WALKABLE
-                elif char == FINISH:
+                    tile = MazeTile.WALKABLE
+                elif char == MazeTile.FINISH.value:
                     finish = (x, y)
-                    char = EMPTY
+                    tile = MazeTile.EMPTY
+                else:
+                    # this will raise an error if the character is not valid
+                    tile = MazeTile(char)
 
-                maze[y].append(char)
+                maze[y].append(tile)
 
-    return State(maze, [player], [minotaur], finish, [], [])
+    moves: UncheckedMoves = validMoves(maze, player)
+    subState = Turn(player, minotaur, [])
+    traversed = {(player, minotaur): moves}
+
+    return State(maze, finish, [], [subState], traversed, False)
+
+
+def colorizeTile(tile: MazeTile) -> str:
+    """
+    Colorizes a tile for printing
+    """
+    if tile == MazeTile.WALKABLE:
+        return f"\033[30;1m{tile.value}\033[0m"
+    else:
+        return tile.value
 
 
 def printMaze(state: State) -> None:
     """
     Prints the maze with the player and minotaur
     """
-    printedMaze: Maze = deepcopy(state.maze)
-    player = state.player[-1]
-    minotaur = state.minotaur[-1]
-    printedMaze[player[1]][player[0]] = PLAYER
-    printedMaze[minotaur[1]][minotaur[0]] = MINOTAUR
+    printedMaze = [[colorizeTile(x) for x in xs] for xs in state.maze]
+    subState = state.turns[-1]
+    player = subState.player
+    minotaur = subState.minotaur
+    printedMaze[player[1]][player[0]] = f"\033[97;1m{PLAYER}\033[0m"
+    printedMaze[minotaur[1]][minotaur[0]] = f"\033[31;1m{MINOTAUR}\033[0m"
 
-    print("\033c", end="")  # clear screen
     for row in printedMaze:
         print("".join(row))
 
-    print("Moves: " + ";".join(state.moves))
+    print("Moves: " + ";".join(x.value for x in subState.moves))
+
+    if subState.player == subState.minotaur:
+        print("You lost!")
+    elif subState.player == state.finish:
+        print("You won!")
+        sys.exit(0)
 
 
 def isLocValid(maze: Maze, loc: Coord) -> bool:
@@ -87,32 +130,51 @@ def isLocValid(maze: Maze, loc: Coord) -> bool:
     x, y = loc
     if y < 0 or y >= len(maze) or x < 0 or x >= len(maze[y]):
         return False
-    if maze[y][x] == WALL:
+    if maze[y][x] == MazeTile.WALL:
         return False
 
     return True
 
 
-def movePlayer(maze: Maze, player: Coord, move: str) -> Tuple[Coord, bool]:
+def validMoves(maze: Maze, coord: Coord) -> Set[Move]:
+    """
+    Returns the list of valid moves for a given coordinate
+    """
+    x, y = coord
+    validMoves: Set[Move] = set([Move.SKIP])
+
+    if isLocValid(maze, (x, y - 1)):
+        validMoves.add(Move.UP)
+    if isLocValid(maze, (x, y + 1)):
+        validMoves.add(Move.DOWN)
+    if isLocValid(maze, (x - 1, y)):
+        validMoves.add(Move.LEFT)
+    if isLocValid(maze, (x + 1, y)):
+        validMoves.add(Move.RIGHT)
+
+    return validMoves
+
+
+def movePlayer(maze: Maze, player: Coord, move: Move) -> Tuple[Coord, bool]:
     """
     Player or minotaur moves in the maze
 
     Returns the new location and whether the move was valid.
     """
     x, y = player
-    if move == MOVE_UP:
+    if move == Move.UP:
         newPlayer = (x, y - 2)
         validCheckLoc = (x, y - 1)
-    elif move == MOVE_DOWN:
+    elif move == Move.DOWN:
         newPlayer = (x, y + 2)
         validCheckLoc = (x, y + 1)
-    elif move == MOVE_LEFT:
+    elif move == Move.LEFT:
         newPlayer = (x - 2, y)
         validCheckLoc = (x - 1, y)
-    elif move == MOVE_RIGHT:
+    elif move == Move.RIGHT:
         newPlayer = (x + 2, y)
         validCheckLoc = (x + 1, y)
-    elif move == MOVE_SKIP:
+    elif move == Move.SKIP:
         return (player, True)
     else:
         return (player, False)
@@ -123,35 +185,33 @@ def movePlayer(maze: Maze, player: Coord, move: str) -> Tuple[Coord, bool]:
         return (player, False)
 
 
-def moveMinotaur(state: State) -> Coord:
+def moveMinotaur(maze: Maze, player: Coord, minotaur: Coord) -> Coord:
     """
     Minotaur moves towards player
 
     It must move horizontally first and then vertically.
     """
-    player = state.player[-1]
-    minotaur = state.minotaur[-1]
-    move = MOVE_SKIP
+    move = Move.SKIP
 
     # try to move horizontally
 
     if player[0] < minotaur[0]:
-        move = MOVE_LEFT
+        move = Move.LEFT
     elif player[0] > minotaur[0]:
-        move = MOVE_RIGHT
+        move = Move.RIGHT
 
-    (newMinotaur, _) = movePlayer(state.maze, minotaur, move)
+    (newMinotaur, _) = movePlayer(maze, minotaur, move)
     if newMinotaur != minotaur:
         return newMinotaur
 
     # try to move vertically
 
     if player[1] < minotaur[1]:
-        move = MOVE_UP
+        move = Move.UP
     elif player[1] > minotaur[1]:
-        move = MOVE_DOWN
+        move = Move.DOWN
 
-    (newMinotaur, _) = movePlayer(state.maze, minotaur, move)
+    (newMinotaur, _) = movePlayer(maze, minotaur, move)
     return newMinotaur
 
 
@@ -169,60 +229,89 @@ def mainLoop(state: State) -> State:
     Both state and initial are mutated in place.
     """
     printMaze(state)
+    subState = state.turns[-1]
 
     if len(state.initial) > 0:
         move = state.initial.pop(0)
+    elif state.solver:
+        move = Move.AUTO
     else:
-        move = getch()
+        try:
+            move = Move(getch())
+        except ValueError:  # invalid move
+            return state
 
-    if move == MOVE_QUIT:
+    if move == Move.QUIT:
         print("You quit!")
         sys.exit(1)
-    elif move == MOVE_UNDO:
-        if len(state.moves) > 0:
-            state.player.pop()
-            state.minotaur.pop()
-            state.minotaur.pop()
-            state.moves.pop()
+
+    if move == Move.AUTO:
+        uncheckedMoves = state.traversed[(subState.player, subState.minotaur)]
+        # pick a move at random from unchecked moves or undo
+        if len(uncheckedMoves) == 0:
+            move = Move.UNDO
+        else:
+            move = random.choice(list(uncheckedMoves))
+
+    if move == Move.UNDO:
+        if len(state.turns) > 1:
+            state.turns.pop()
         return state
 
-    (player, valid) = movePlayer(state.maze, state.player[-1], move)
+    if subState.player == subState.minotaur or subState.player == state.finish:
+        # if the game is lost or won, allow only undo and quit
+        return state
+
+    # remove this move from the list of unchecked moves
+    if move in state.traversed[(subState.player, subState.minotaur)]:
+        state.traversed[(subState.player, subState.minotaur)].remove(move)
+
+    (player, valid) = movePlayer(state.maze, subState.player, move)
     if not valid:
         return state
 
-    state.player.append(player)
-    state.moves.append(move)
-
     # minotaur moves twice
-    minotaur = moveMinotaur(state)
-    state.minotaur.append(minotaur)
-    minotaur = moveMinotaur(state)
-    state.minotaur.append(minotaur)
+    minotaur = moveMinotaur(state.maze, player, state.turns[-1].minotaur)
+    minotaur = moveMinotaur(state.maze, player, minotaur)
+    moves = subState.moves + [move]
 
-    if player == state.minotaur[-1]:
-        printMaze(state)
-        print("You lose!")
-        sys.exit(1)
+    uncheckedMoves = validMoves(state.maze, player)
+    # if there already is a substate with the same player and minotaur locations,
+    # use that subState's uncheckedMoves
+    if (player, minotaur) in state.traversed:
+        uncheckedMoves = state.traversed[(player, minotaur)]
+    # if game is lost, uncheckedMoves is empty
+    if player == minotaur or player == state.finish:
+        uncheckedMoves = set()
 
-    if player == state.finish:
-        printMaze(state)
-        print("You win!")
-        sys.exit(0)
+    state.traversed[(player, minotaur)] = uncheckedMoves
+
+    state.turns.append(Turn(player=player, minotaur=minotaur, moves=moves))
 
     return state
 
 
 def main() -> None:
-    if len(sys.argv) < 2 or len(sys.argv) > 3:
-        print("Usage: python3 theseus-and-the-minotaur.py <maze filename> <optional starting position>")
+    argv = sys.argv[1:]
+    solver = False
+    if len(argv) > 0 and argv[0] == "--solver":
+        solver = True
+        argv.pop(0)
+
+    if len(argv) == 0 or len(argv) > 2:
+        print(
+            "Usage: python3 theseus-and-the-minotaur.py [--solver] "
+            + "<maze filename> <optional starting position>"
+        )
         sys.exit(1)
 
-    filename = sys.argv[1]
+    filename = argv.pop(0)
     state = loadMaze(filename)
+    state = state._replace(solver=solver)
 
-    initial: List[str] = []
-    if len(sys.argv) == 3:
-        initial = sys.argv[2].split(";")
+    initial: List[Move] = []
+    if len(argv) > 0:
+        initial = [Move(x) for x in argv.pop().split(";")]
         state = state._replace(initial=initial)
 
     while True:

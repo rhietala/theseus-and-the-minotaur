@@ -28,6 +28,7 @@ Controls:
 - `w`: west
 - `d`: delay, skip your move
 - `u`: undo last move
+- `a`: automatically pick a random move
 - `q`: quit game (ctrl-c also works)
 
 Starting the game:
@@ -84,4 +85,11 @@ $ python3 theseus-and-the-minotaur.py maze1.txt "n;n;e;s;s;s;s;s;s;e;n"
 #. . . . . . . . . . . . . .#
 #############################
 Moves: n;n;e;s;s;s;s;s;s;e;n
+```
+
+The script includes a dummy maze solver. It will not produce the optimal solution,
+but has so far solved the mazes.
+
+```
+$ python3 theseus-and-the-minotaur.py --solver maze1.txt
 ```
